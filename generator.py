@@ -187,19 +187,20 @@ def drawcircles_fix_color(original_circles, coordinates, colors, fig_size_h, fig
 
 def prob_fix_color(original_circles, coordinates, colors, fig_size_h, fig_size_w,blur=1):
     assert original_circles.shape[0] == colors.shape[0]
+    # coordinates repeated, one per # points (to get summation from Eq (2))
     coordinates = coordinates.expand(original_circles.shape[1],-1,-1,-1).permute(1,2,0,3)
     # circles = original_circles * fig_size_h
+
+    # circles: scale values for colorxpoint up by height, width respectively
     circle0 = original_circles[...,0]*fig_size_h
     circle1 = original_circles[...,1]*fig_size_w
     circles = torch.stack([circle0,circle1],dim=-1)
+    # now you have the control points-per-color scaled to either H or W
     dist_sum = torch.zeros([colors.shape[0],fig_size_h,fig_size_w]).to(coordinates.device)
     for color_idx in range(colors.shape[0]):
+        # calculate distance between each all coordinates and all control points for a single color
         dist = torch.norm(coordinates-circles[color_idx,:,:2],dim=-1)
-        # dist = torch.norm(coordinates-circles[color_idx,:,:2],dim=-1)
-        # dist = dist / (circles[color_idx,:,2]+1)
         dist_sum[color_idx] = torch.exp(-dist/blur).sum(dim=-1)
-        # print(dist_sum[color_idx])
-    # print(dist_sum[0])
     dist_sum = dist_sum/dist_sum.sum(dim=0)
     return dist_sum
 

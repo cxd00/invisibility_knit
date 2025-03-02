@@ -16,11 +16,15 @@ from tqdm import tqdm
 import gc
 import matplotlib.pyplot as plt
 from easydict import EasyDict
+from PIL import Image
 
+from skimage.io import imread
+from skimage.util import img_as_float
 from generator import *
 from load_data import *
 from tps import *
 # from transformers import DeformableDetrForObjectDetection
+from skimage.metrics import structural_similarity
 
 import torch
 import torch.nn as nn
@@ -124,7 +128,7 @@ class PatchTrainer(object):
         color_transform = ColorTransform('color_transform_dim6.npz')
         self.color_transform = color_transform.to(device)
 
-        self.fig_size_H = 340
+        self.fig_size_H = 364
         self.fig_size_W = 864
 
         resolution = 4
@@ -136,7 +140,8 @@ class PatchTrainer(object):
         obj_filename_tshirt = os.path.join(self.DATA_DIR, "Archive/tshirt_join/tshirt.obj")
 
         self.coordinates = torch.stack(torch.meshgrid(torch.arange(h), torch.arange(w)), -1).to(device)
-        # self.colors = torch.load("data/camouflage4.pth").float().to(device)
+        self.colors = torch.load("data/camouflage4.pth").float().to(device)
+        # print(self.colors)
         self.colors = torch.tensor([
             [236, 218, 192], 
             [83, 100, 116],
@@ -147,6 +152,7 @@ class PatchTrainer(object):
             [46, 113, 75],
             [157, 178, 194],
             [194, 192, 172]]).float().to(device)
+        self.colors = torch.div(self.colors, 255.)
         num_colors = self.colors.shape[0]
 
         self.tshirt_point = torch.rand([num_colors, args.num_points_tshirt, 3], requires_grad=True, device=device)
@@ -156,6 +162,9 @@ class PatchTrainer(object):
         self.faces = self.mesh_tshirt.textures.faces_uvs_padded()
         self.verts_uv = self.mesh_tshirt.textures.verts_uvs_padded()
         self.faces_uvs_tshirt = self.mesh_tshirt.textures.faces_uvs_list()[0]
+
+        # self.ref_image = img_as_float(imread("test.png"))
+        self.ref_image = plt.imread("test.png")
 
         self.optimizer = torch.optim.Adam([self.tshirt_point], args.lr)
 
@@ -292,7 +301,7 @@ class PatchTrainer(object):
     def synthesis_image(self, img_batch, use_tps2d=True, use_tps3d=True):
         if use_tps2d:
             # tps_2d
-            source_control_points_tshirt = p3dmd.get_points(self.tshirt_locations_infos, torch.pi / 180 * args.tps2d_range_t, args.tps2d_range_r,
+            source_control_points_tshirt = p3dmd.get_points(self.tshirt_locations_infos, torch.pi / 180 * self.args.tps2d_range_t, self.args.tps2d_range_r,
                                                             bs=self.batch_size, random=True)
             locations_tshirt = self.tps2d_tshirt(source_control_points_tshirt.to(self.device))
         else:
@@ -315,10 +324,10 @@ class PatchTrainer(object):
 
     def update_mesh(self, tau=0.3, type='gumbel'):
         # camouflage:
-        raise Exception(self.tshirt_point.shape, self.tshirt_point[:,0, 0])
         prob_map = prob_fix_color(self.tshirt_point, self.coordinates, self.colors, self.h, self.w, blur=self.args.blur).unsqueeze(0)
         prob_map = self.camouflage_kernel(prob_map)
         prob_map = prob_map.squeeze(0).permute(1, 2, 0)
+        # raise Exception(self.tshirt_point)
 
         gb_tshirt = -(-(self.seeds_tshirt + 1e-20).log() + 1e-20).log()
 
@@ -374,7 +383,9 @@ class PatchTrainer(object):
             ep_tv_loss = 0
             ep_ctrl_loss = 0
             ep_seed_loss = 0
+            ep_ssim_loss = 0
             ep_log_likelihood = 0
+            ep_sim_loss = 0
             eff_count = 0  # record how many images in this epoch are really in training so that we can calculate accurate loss
             self.sampler_probs = self.loss_history / self.num_history
             if epoch % 100 == 0:
@@ -416,7 +427,8 @@ class PatchTrainer(object):
                 try:
                     det_loss, max_prob_list = self.prob_extractor(output, gt, loss_type=args.loss_type, iou_thresh=args.train_iou)
                     eff_count += 1
-                except RuntimeError:  # current batch of imgs have no bbox be detected
+                except RuntimeError as e:  # current batch of imgs have no bbox be detected
+                    print("ERROR", e)
                     continue
                 t3 = time.time()
                 if self.azim_inds is not None:
@@ -424,13 +436,17 @@ class PatchTrainer(object):
                     self.num_history.index_put_([self.azim_inds], torch.ones_like(max_prob_list), accumulate=True)
                 loss = 0
                 tv_loss = torch.tensor([0])
-                loss += det_loss
+                loss += 0.1*det_loss
                 if args.tv_loss > 0:
                     tv_loss = self.tv_loss(tex)
                     loss += tv_loss * args.tv_loss
 
                 loss_c = ctrl_loss(self.tshirt_point, self.fig_size_H, self.fig_size_W)
                 loss += args.ctrl * loss_c
+
+                if args.loss_ssim != 0:
+                    loss_ssim = 1-structural_similarity(tex[0].detach().cpu().numpy(), self.ref_image, channel_axis=2, data_range=self.ref_image.max()-self.ref_image.min())
+                    loss += loss_ssim
 
                 if args.cdist != 0:
                     loss_seed = args.cdist * reg_dist(self.seeds_tshirt_train.flatten(), sample_num=args.rd_num)
@@ -443,6 +459,7 @@ class PatchTrainer(object):
                 ep_det_loss += det_loss.item()
                 ep_tv_loss += tv_loss.item()
                 ep_seed_loss += loss_seed.item()
+                ep_ssim_loss += loss_ssim.item()
                 ep_loss += loss.item()
                 loss.backward()
                 self.optimizer.step()
@@ -478,6 +495,7 @@ class PatchTrainer(object):
             ep_ctrl_loss = ep_ctrl_loss / eff_count
             ep_mean_prob = ep_mean_prob / eff_count
             ep_seed_loss = ep_seed_loss / eff_count
+            ep_ssim_loss = ep_ssim_loss / eff_count
             if True:
                 print('  EPOCH NR: ', epoch),
                 print('EPOCH LOSS: ', ep_loss)
@@ -486,7 +504,15 @@ class PatchTrainer(object):
                 print('   TV LOSS: ', ep_tv_loss)
                 print(' CTRL LOSS: ', ep_ctrl_loss)
                 print(' SEED LOSS: ', ep_seed_loss)
+                print(' SSIM LOSS: ', ep_ssim_loss)
                 print('EPOCH TIME: ', et1 - et0)
+                # if epoch % 2 == 0:
+                    # plt.imshow(tex[0].detach().cpu().numpy())
+                    # plt.pause(0.1)
+                    # plt.cla()
+                    # print(tex[0].max(), tex[0].min(), tex[0].shape)
+                    # plt.imsave("intermediate.png", tex[0].detach().clamp(0,1).cpu().numpy())
+                    # _ = input()
 
                 # self.writer.add_scalar('epoch/total_loss', ep_loss, epoch)
                 # self.writer.add_scalar('epoch/tv_loss', ep_tv_loss, epoch)
@@ -496,10 +522,9 @@ class PatchTrainer(object):
                 # self.writer.add_scalar('epoch/lr', self.optimizer.param_groups[0]['lr'], epoch)
             et0 = time.time()
 
-            if (epoch + 1) % 100 == 0 or epoch == 0:
-                fig = plt.figure()
-                plt.imshow(tex[0].detach().cpu().numpy())
-                plt.axis('off')
+            if (epoch + 1) % 5 == 0 or epoch == 0:
+                tex_img = Image.fromarray(np.array(255*tex.squeeze(0).detach().cpu()).astype('uint8'))
+                tex_img.show()
                 # self.writer.add_figure('maps_tshirt', fig, epoch)
 
             if (epoch + 1) % 50 == 0:
@@ -668,7 +693,7 @@ if __name__ == '__main__':
     parser.add_argument('--device', default='cuda:1', help='')
     parser.add_argument('--lr', type=float, default=0.001, help='')
     parser.add_argument('--lr_seed', type=float, default=0.01, help='')
-    parser.add_argument('--nepoch', type=int, default=600, help='')
+    parser.add_argument('--nepoch', type=int, default=60, help='')
     parser.add_argument('--checkpoints', type=int, default=0, help='')
     parser.add_argument('--batch_size', type=int, default=4, help='')
     parser.add_argument('--save_path', default='results/', help='')
