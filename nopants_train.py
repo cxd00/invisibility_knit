@@ -315,7 +315,7 @@ class PatchTrainer(object):
 
     def update_mesh(self, tau=0.3, type='gumbel'):
         # camouflage:
-        raise Exception(self.tshirt_point.shape, self.tshirt_point[:,0, 0])
+        # raise Exception(self.tshirt_point.shape, self.tshirt_point[:,0, 0])
         prob_map = prob_fix_color(self.tshirt_point, self.coordinates, self.colors, self.h, self.w, blur=self.args.blur).unsqueeze(0)
         prob_map = self.camouflage_kernel(prob_map)
         prob_map = prob_map.squeeze(0).permute(1, 2, 0)
