@@ -192,10 +192,11 @@ def prob_fix_color(original_circles, coordinates, colors, fig_size_h, fig_size_w
     # circles = original_circles * fig_size_h
 
     # circles: scale values for colorxpoint up by height, width respectively
-    circle0 = original_circles[...,0]*fig_size_h
-    circle1 = original_circles[...,1]*fig_size_w
+    circle0 = original_circles[...,1]*fig_size_h
+    circle1 = original_circles[...,0]*fig_size_w
     circles = torch.stack([circle0,circle1],dim=-1)
     # now you have the control points-per-color scaled to either H or W
+    print(fig_size_h, fig_size_w, "no")
     dist_sum = torch.zeros([colors.shape[0],fig_size_h,fig_size_w]).to(coordinates.device)
     for color_idx in range(colors.shape[0]):
         # calculate distance between each all coordinates and all control points for a single color
@@ -207,7 +208,7 @@ def prob_fix_color(original_circles, coordinates, colors, fig_size_h, fig_size_w
 def gumbel_color_fix_seed(prob_map, seed, color, tau=0.3, type='gumbel'):
     # print(prob_map.shape, seed.shape, color.shape)
     if type == 'gumbel':
-        color_map = F.softmax((torch.log(prob_map) + seed)/tau, dim=-1)
+        color_map = F.softmax((torch.log(prob_map+0.00001) + seed)/tau, dim=-1)
     elif type == 'determinate':
         color_ind = (torch.log(prob_map) + seed).max(-1)[1]
         color_map = F.one_hot(color_ind, prob_map.shape[-1]).to(prob_map)

@@ -17,6 +17,7 @@ import scipy
 import scipy.interpolate
 from tqdm import tqdm
 from easydict import EasyDict
+from PIL import Image
 
 # PyTorch imports
 import torch
@@ -27,6 +28,7 @@ from torch.nn import parameter
 from torch.autograd import Variable, Function
 import torchvision
 from torchvision import transforms
+from skimage.metrics import structural_similarity
 
 # PyTorch3D imports
 import pytorch3d as p3d
@@ -50,7 +52,7 @@ from pytorch3d.renderer import (
 # scikit-image imports
 import skimage.segmentation as segmentation
 from skimage.color import label2rgb
-from skimage.io import imread
+from skimage.io import imsave, imread
 
 # Local imports
 from generator import *
@@ -124,12 +126,8 @@ class SLICGenerator(torch.nn.Module):
     def _compute_distances(self, features, centroids):
         """Compute distances between pixels and cluster centroids."""
         
-        # Reshape for broadcasting
-        features_expanded = features.unsqueeze(1)  # [N, 1, D]
-        centroids_expanded = centroids.unsqueeze(0)  # [1, K, D]
-        
         # Compute Euclidean distances
-        distances = torch.sum((features_expanded - centroids_expanded) ** 2, dim=2)  # [N, K]
+        distances = torch.sum((features[:,None,:] - centroids[None,:,:]) ** 2, dim=2)  # [N, K]
         return distances
 
     def _create_features(self, image, n_segments, compactness):
@@ -139,11 +137,6 @@ class SLICGenerator(torch.nn.Module):
         # Move image to the same device as the model
         device = image.device
         
-        # Convert from [B, C, H, W] to [H, W, C]
-        if len(image.shape) == 4:  # If we have a batch dimension
-            image = image[0]  # Take first image from batch
-            image = image.permute(1, 2, 0)  # Convert from [C, H, W] to [H, W, C]
-            
         H, W, C = image.shape
         
         # Create features matrix: [y, x, r, g, b]
@@ -170,10 +163,8 @@ class SLICGenerator(torch.nn.Module):
         # print_memory_usage("before processing diff slic")
         
         features = self._create_features(image, n_segments, compactness)
+        print(features.shape,  "FEATS")
         # Clear unused variables
-        del image
-        gc.collect()
-        # print_memory_usage("after features creation in diff slic")
         
         device = features.device
         
@@ -184,24 +175,17 @@ class SLICGenerator(torch.nn.Module):
         
         # Process in smaller chunks to reduce memory
         chunk_size = min(10000, len(features))
-        distances_list = []
+        distances = []
         for i in range(0, len(features), chunk_size):
             chunk = features[i:i + chunk_size]
             chunk_distances = self._compute_distances(chunk, centroids)
-            distances_list.append(chunk_distances)
-            del chunk
-            gc.collect()
+            distances.append(chunk_distances)
         
-        distances = torch.cat(distances_list, dim=0)
-        del distances_list
-        gc.collect()
-        # print_memory_usage("after compute distances in diff slic")
+        distances = torch.cat(distances, dim=0)
         
         # Reduce number of iterations
-        final_assignments = None  # Initialize outside the loop
         for _ in range(3):  # Reduced from 5
             assignments = self.gumbel_softmax(-distances, temperature=temperature, hard=False)
-            final_assignments = assignments  # Store the last assignments
             
             # Update centroids
             new_centroids = torch.zeros_like(centroids)
@@ -212,16 +196,11 @@ class SLICGenerator(torch.nn.Module):
                 new_centroids[k] = (features * assignments[:, k:k+1]).sum(dim=0) / weights_sum[k]
             
             centroids = new_centroids
-            
-            # Clear intermediate results
-            del assignments
+            del new_centroids
             gc.collect()
-        
-        del features, distances
-        gc.collect()
         # print_memory_usage("after gumbel softmax in diff slic")
         
-        return centroids, final_assignments
+        return centroids, assignments
 
     def gumbel_softmax(self,logits, temperature=1.0, hard=False):
         """
@@ -309,7 +288,6 @@ class SLICGenerator(torch.nn.Module):
         # Reshape back to image
         reconstructed = reconstructed.reshape(H, W, C)
         
-        print("reconstruction done")
         return reconstructed
 
 class PatchTrainer(object):
@@ -317,6 +295,8 @@ class PatchTrainer(object):
         self.batch_size = batch_size
         self.img_size = img_size
         self.device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.ref_image = Image.open("test.png")
+        self.ref_image.show()
         
         # Initialize camera parameters
         self.alpha = 0.0  # Can be adjusted for camera sampling
@@ -537,23 +517,23 @@ class PatchTrainer(object):
                 centroids, assignments = adv_slic(reconstructed_image)
                 
                 reconstructed_image = adv_slic.reconstruct(reconstructed_image.shape)
-                
+
                 # Apply reconstructed texture to human model
                 p_img_batch, gt = self.synthesis_image(img_batch)
-                print("image synthesized")
                 
                 # Get model predictions
                 output = self.model(p_img_batch)
-                print("model predicted")
                 
                 # Compute detection loss
                 try:
                     det_loss, max_prob_list = self.prob_extractor(output, gt, loss_type='max_iou', iou_thresh=0.01)
                     eff_count += 1
-                    print("lossed")
                 except RuntimeError:  # current batch has no bbox detected
+                    print("bad")
                     continue
                 
+                # ssim_loss = 1-structural_similarity(reconstructed_image.detach().cpu().numpy(), self.ref_image, channel_axis=2, data_range=img_max-img_min)
+                # loss += ssim_loss
                 # Total loss (simplified from original)
                 loss = det_loss
                 
@@ -571,12 +551,13 @@ class PatchTrainer(object):
                 
                 # Backward pass
                 loss.backward()
-                print("propagated")
                 optimizer.step()
                 
                 # Optional: Visualize progress
                 if i_batch % 10 == 0:
                     print(f'Batch {i_batch}, Loss: {loss.item():.4f}')
+                    Image.fromarray((255*reconstructed_image.numpy()).astype(np.uint8)).show()
+                    imsave(f'intermed_{i_batch}.png', (255*reconstructed_image.numpy()).astype(np.uint8))
             
             # Epoch statistics
             et1 = time.time()

@@ -128,8 +128,8 @@ class PatchTrainer(object):
         color_transform = ColorTransform('color_transform_dim6.npz')
         self.color_transform = color_transform.to(device)
 
-        self.fig_size_H = 364
-        self.fig_size_W = 864
+        self.fig_size_H = 340
+        self.fig_size_W = 860
 
         resolution = 4
         h, w = int(self.fig_size_H / resolution), int(self.fig_size_W / resolution)
@@ -143,19 +143,38 @@ class PatchTrainer(object):
         self.colors = torch.load("data/camouflage4.pth").float().to(device)
         # print(self.colors)
         self.colors = torch.tensor([
-            [236, 218, 192], 
-            [83, 100, 116],
-            [12, 156, 194],
-            [105, 115, 84],
-            [211, 219, 207],
-            [191, 214, 203],
-            [46, 113, 75],
+            [194, 192, 172],
             [157, 178, 194],
-            [194, 192, 172]]).float().to(device)
+            [106, 115, 84],
+            [83, 100, 116],
+            [41, 62, 85],
+            [46, 114, 75]]).float().to(device)
         self.colors = torch.div(self.colors, 255.)
         num_colors = self.colors.shape[0]
 
-        self.tshirt_point = torch.rand([num_colors, args.num_points_tshirt, 3], requires_grad=True, device=device)
+        random_seeds = [
+            [[14, 67],[34, 58],[50, 60],[23, 6],[61, 13],[90, 8],[106, 19],[123, 11],[166, 51],[185, 58]],
+            [[2, 19],[10, 1],[51, 3],[76, 21],[99, 12],[141, 25],[138, 1],[185, 3],[190, 25],[211, 10]],
+            [[16, 13],[10, 48],[12, 76],[62, 44],[76, 68],[95, 76],[89, 29],[128, 44],[149, 79],[203, 52]],
+            [[16, 28],[56, 78],[82, 82],[108, 48],[105, 76],[138, 29],[170, 40],[191, 40],[177, 77],[214, 40]],
+            [[4, 32],[35, 33],[63, 32],[75, 81],[100, 31],[130, 32],[162, 3],[153, 35],[168, 83],[188, 32]],
+            [[0, 49],[27, 45],[71, 35],[85, 38],[106, 39],[119, 39],[135, 39],[176, 40],[169, 43],[205, 42]]
+        ]
+        for i, r in enumerate(random_seeds):
+            np.random.shuffle(r)
+            
+        random_seeds = np.array(random_seeds).astype(np.float32)
+        print(random_seeds.shape)
+        random_seeds = np.random.rand(*random_seeds.shape) + random_seeds
+        random_seeds[:,:,0] = random_seeds[:,:,0] / self.w
+        random_seeds[:,:,1] = random_seeds[:,:,1] / self.h
+        print(random_seeds.min(), random_seeds.max())
+        random_seeds = np.clip(random_seeds, 0, 1)
+        # self.tshirt_point = torch.rand([num_colors, args.num_points_tshirt, 2], requires_grad=True, device=device)
+        # np.save("rand.npy", self.tshirt_point.cpu().detach().numpy())
+        self.tshirt_point = torch.tensor(random_seeds, requires_grad=True, device=device)
+        # np.save("ours.npy", random_seeds)
+        # self.tshirt_point = torch.full([num_colors, args.num_points_tshirt, 3], fill_value=0.7, requires_grad=True, device=device)
         self.mesh_man = load_objs_as_meshes([obj_filename_man], device=device)
         self.mesh_tshirt = load_objs_as_meshes([obj_filename_tshirt], device=device)
 
@@ -164,7 +183,7 @@ class PatchTrainer(object):
         self.faces_uvs_tshirt = self.mesh_tshirt.textures.faces_uvs_list()[0]
 
         # self.ref_image = img_as_float(imread("test.png"))
-        self.ref_image = plt.imread("test.png")
+        self.ref_image = np.array(Image.open("road.png").resize((self.fig_size_W, self.fig_size_H)))
 
         self.optimizer = torch.optim.Adam([self.tshirt_point], args.lr)
 
@@ -299,6 +318,7 @@ class PatchTrainer(object):
         return
 
     def synthesis_image(self, img_batch, use_tps2d=True, use_tps3d=True):
+        print("IN SYNTHS")
         if use_tps2d:
             # tps_2d
             source_control_points_tshirt = p3dmd.get_points(self.tshirt_locations_infos, torch.pi / 180 * self.args.tps2d_range_t, self.args.tps2d_range_r,
@@ -312,6 +332,7 @@ class PatchTrainer(object):
             source_coordinate = self.tps3d.tps_mesh(max_range=self.max_range, batch_size=self.batch_size).view(-1, 3)
         else:
             source_coordinate = None
+
         # render images
         images_predicted = p3dmd.view_mesh_wrapped([self.mesh_man, self.mesh_tshirt],
                                                    [None, locations_tshirt],
@@ -319,21 +340,23 @@ class PatchTrainer(object):
                                                    cameras=self.cameras, lights=self.lights, image_size=800, fov=45,
                                                    max_faces_per_bin=30000, faces_per_pixel=3)
         adv_batch = images_predicted.permute(0, 3, 1, 2)
+        print(adv_batch.shape, img_batch.shape)
         p_img_batch, gt = self.patch_transformer(img_batch, adv_batch)
         return p_img_batch, gt
 
     def update_mesh(self, tau=0.3, type='gumbel'):
         # camouflage:
+        print("update_mesh", self.tshirt_point.mean())
         prob_map = prob_fix_color(self.tshirt_point, self.coordinates, self.colors, self.h, self.w, blur=self.args.blur).unsqueeze(0)
         prob_map = self.camouflage_kernel(prob_map)
         prob_map = prob_map.squeeze(0).permute(1, 2, 0)
-        # raise Exception(self.tshirt_point)
 
         gb_tshirt = -(-(self.seeds_tshirt + 1e-20).log() + 1e-20).log()
 
         tex = gumbel_color_fix_seed(prob_map, gb_tshirt, self.colors, tau=tau, type=type)
 
         tex = self.expand_kernel(self.color_transform(tex.permute(0, 3, 1, 2))).permute(0, 2, 3, 1)
+        Image.fromarray((tex[0].detach().cpu().numpy()*255).astype(np.uint8)).show()
         # tex = plt.imread("/home/cynthia/uw/Adversarial_camou/xp.png")[None,:]
         self.mesh_tshirt.textures = TexturesUV(maps=tex, faces_uvs=self.faces, verts_uvs=self.verts_uv)
 
@@ -375,6 +398,7 @@ class PatchTrainer(object):
         if checkpoints > 0:
             self.load_weights(args.save_path, checkpoints - 1)
 
+        torch.autograd.set_detect_anomaly(True)
         for epoch in tqdm(range(checkpoints, args.nepoch)):
             print('######################################')
             ep_det_loss = 0
@@ -383,7 +407,7 @@ class PatchTrainer(object):
             ep_tv_loss = 0
             ep_ctrl_loss = 0
             ep_seed_loss = 0
-            ep_ssim_loss = 0
+            # ep_ssim_loss = 0
             ep_log_likelihood = 0
             ep_sim_loss = 0
             eff_count = 0  # record how many images in this epoch are really in training so that we can calculate accurate loss
@@ -415,6 +439,7 @@ class PatchTrainer(object):
                     self.seeds_tshirt = args.seed_ratio * self.seeds_tshirt_train + (1 - args.seed_ratio) * self.seeds_tshirt_fixed
 
                 tex = self.update_mesh(tau=tau)
+                # Image.fromarray(img_batch[0].cpu().numpy())
                 p_img_batch, gt = self.synthesis_image(img_batch, not args.disable_tps2d, not args.disable_tps3d)
                 t1 = time.time()
                 normalize = True
@@ -424,12 +449,12 @@ class PatchTrainer(object):
                 output = self.model(p_img_batch)
 
                 t2 = time.time()
-                try:
-                    det_loss, max_prob_list = self.prob_extractor(output, gt, loss_type=args.loss_type, iou_thresh=args.train_iou)
-                    eff_count += 1
-                except RuntimeError as e:  # current batch of imgs have no bbox be detected
-                    print("ERROR", e)
-                    continue
+                # try:
+                det_loss, max_prob_list = self.prob_extractor(output, gt, loss_type=args.loss_type, iou_thresh=args.train_iou)
+                eff_count += 1
+                # except RuntimeError as e:  # current batch of imgs have no bbox be detected
+                #     print("ERROR", e)
+                #     continue
                 t3 = time.time()
                 if self.azim_inds is not None:
                     self.loss_history.index_put_([self.azim_inds], max_prob_list.detach(), accumulate=True)
@@ -444,9 +469,9 @@ class PatchTrainer(object):
                 loss_c = ctrl_loss(self.tshirt_point, self.fig_size_H, self.fig_size_W)
                 loss += args.ctrl * loss_c
 
-                if args.loss_ssim != 0:
-                    loss_ssim = 1-structural_similarity(tex[0].detach().cpu().numpy(), self.ref_image, channel_axis=2, data_range=self.ref_image.max()-self.ref_image.min())
-                    loss += loss_ssim
+                # if args.loss_ssim != 0:
+                #     loss_ssim = 1-structural_similarity(tex[0].detach().cpu().numpy(), self.ref_image, channel_axis=2, data_range=self.ref_image.max()-self.ref_image.min())
+                #     loss += loss_ssim
 
                 if args.cdist != 0:
                     loss_seed = args.cdist * reg_dist(self.seeds_tshirt_train.flatten(), sample_num=args.rd_num)
@@ -459,7 +484,7 @@ class PatchTrainer(object):
                 ep_det_loss += det_loss.item()
                 ep_tv_loss += tv_loss.item()
                 ep_seed_loss += loss_seed.item()
-                ep_ssim_loss += loss_ssim.item()
+                # ep_ssim_loss += loss_ssim.item()
                 ep_loss += loss.item()
                 loss.backward()
                 self.optimizer.step()
@@ -495,7 +520,7 @@ class PatchTrainer(object):
             ep_ctrl_loss = ep_ctrl_loss / eff_count
             ep_mean_prob = ep_mean_prob / eff_count
             ep_seed_loss = ep_seed_loss / eff_count
-            ep_ssim_loss = ep_ssim_loss / eff_count
+            # ep_ssim_loss = ep_ssim_loss / eff_count
             if True:
                 print('  EPOCH NR: ', epoch),
                 print('EPOCH LOSS: ', ep_loss)
@@ -504,7 +529,7 @@ class PatchTrainer(object):
                 print('   TV LOSS: ', ep_tv_loss)
                 print(' CTRL LOSS: ', ep_ctrl_loss)
                 print(' SEED LOSS: ', ep_seed_loss)
-                print(' SSIM LOSS: ', ep_ssim_loss)
+                # print(' SSIM LOSS: ', ep_ssim_loss)
                 print('EPOCH TIME: ', et1 - et0)
                 # if epoch % 2 == 0:
                     # plt.imshow(tex[0].detach().cpu().numpy())

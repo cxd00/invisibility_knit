@@ -168,6 +168,7 @@ class SLICGenerator(torch.nn.Module):
         """
         # First, create image features matrix
         features = self._create_features(image, n_segments, compactness)
+        print('create_fearues')
         device = features.device  # Get the device from features
         
         H, W, C = image.shape
@@ -190,7 +191,7 @@ class SLICGenerator(torch.nn.Module):
                     image[y, x, 0],
                     image[y, x, 1],
                     image[y, x, 2]
-                ], requires_grad=requires_grad, device=device)  # Add device here
+                ], requires_grad=requires_grad, device="cuda")  # Add device here
                 centroids.append(centroid)
         centroids = torch.stack(centroids)
         
@@ -253,6 +254,7 @@ class SLICGenerator(torch.nn.Module):
         """
         H,W,C = original_shape
         device = centroids.device  # Get the device from centroids
+        print(device)
         
         # Extract color features from centroids (last 3 dimensions)
         color_centroids = centroids[:, -3:]  # [K, 3]
@@ -298,7 +300,6 @@ class SLICGenerator(torch.nn.Module):
         # Reshape back to image
         reconstructed = reconstructed.reshape(H, W, C)
         
-        print("reconstruction done")
         return reconstructed
 
 class PatchTrainer(object):
@@ -529,17 +530,14 @@ class PatchTrainer(object):
                 
                 # Apply reconstructed texture to human model
                 p_img_batch, gt = self.synthesis_image(img_batch)
-                print("image synthesized")
                 
                 # Get model predictions
                 output = self.model(p_img_batch)
-                print("model predicted")
                 
                 # Compute detection loss
                 try:
                     det_loss, max_prob_list = self.prob_extractor(output, gt, loss_type='max_iou', iou_thresh=0.01)
                     eff_count += 1
-                    print("lossed")
                 except RuntimeError:  # current batch has no bbox detected
                     continue
                 
@@ -560,7 +558,6 @@ class PatchTrainer(object):
                 
                 # Backward pass
                 loss.backward()
-                print("propagated")
                 optimizer.step()
                 
                 # Optional: Visualize progress
