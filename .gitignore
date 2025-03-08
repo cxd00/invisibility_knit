@@ -1,0 +1,11 @@
+*.weights
+*.png
+arch/
+data/
+checkpoints/
+results/
+*.zip
+yolo2/
+__MACOSX/
+__pycache__/
+darknet53.conv.74
