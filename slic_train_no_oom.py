@@ -263,7 +263,7 @@ class SLICGenerator(torch.nn.Module):
             reconstructed image
         """
         H,W,C = original_shape
-        device = centroids.device  # Get the device from centroids
+        device = centroids.device  # Get the device from centroids # TODO: maybe something weird here
         
         # Extract color features from centroids (last 3 dimensions)
         color_centroids = centroids[:, -3:]  # [K, 3]
