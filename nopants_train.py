@@ -795,7 +795,7 @@ if __name__ == '__main__':
     if not args.test:
         config = vars(args)
         config["epochs"] = args.nepoch
-        wandb.init(project="invisibility_knit", config=config, id="nopants-" + str(args.nepochs) + "-" + datetime.now().strftime("%Y-%m-%d-%H-%M-%S"))
+        wandb.init(project="invisibility_knit", config=config, id="nopants-" + str(args.nepoch) + "-" + datetime.now().strftime("%Y-%m-%d-%H-%M-%S"))
 
         trainer.train()
     else:
