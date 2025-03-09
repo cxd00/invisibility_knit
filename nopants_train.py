@@ -549,7 +549,15 @@ class PatchTrainer(object):
                     "tv_loss": ep_tv_loss,
                     "ctrl_loss": ep_ctrl_loss,
                     "seed_loss": ep_seed_loss,
-                    "epoch_time": et1 - et0
+                    "epoch_time": et1 - et0,
+                    "synthesized_texture": wandb.Image(
+                        np.array(255*tex.squeeze(0).detach().cpu()).astype('uint8'),
+                        caption=f"Texture at Epoch {epoch}"
+                    ),
+                    "rendered_image": wandb.Image(
+                        np.array(255*p_img_batch[0].permute(1,2,0).detach().cpu()).astype('uint8'),
+                        caption=f"Rendered at Epoch {epoch}"
+                    )
                 })
                 # if epoch % 2 == 0:
                     # plt.imshow(tex[0].detach().cpu().numpy())
