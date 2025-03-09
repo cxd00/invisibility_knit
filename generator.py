@@ -196,7 +196,6 @@ def prob_fix_color(original_circles, coordinates, colors, fig_size_h, fig_size_w
     circle1 = original_circles[...,0]*fig_size_w
     circles = torch.stack([circle0,circle1],dim=-1)
     # now you have the control points-per-color scaled to either H or W
-    print(fig_size_h, fig_size_w, "no")
     dist_sum = torch.zeros([colors.shape[0],fig_size_h,fig_size_w]).to(coordinates.device)
     for color_idx in range(colors.shape[0]):
         # calculate distance between each all coordinates and all control points for a single color

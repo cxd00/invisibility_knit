@@ -16,17 +16,11 @@ from tqdm import tqdm
 import gc
 import matplotlib.pyplot as plt
 from easydict import EasyDict
-from PIL import Image
-
-from skimage.io import imread
-from skimage.util import img_as_float
 
 from generator import *
 from load_data import *
 from tps import *
-from sample_uniformly_per_color import *
 # from transformers import DeformableDetrForObjectDetection
-from skimage.metrics import structural_similarity
 
 import torch
 import torch.nn as nn
@@ -131,78 +125,56 @@ class PatchTrainer(object):
         self.color_transform = color_transform.to(device)
 
         self.fig_size_H = 340
-        self.fig_size_W = 860
+        self.fig_size_W = 864
+
+        self.fig_size_H_t = 484
+        self.fig_size_W_t = 700
 
         resolution = 4
-        h, w = int(self.fig_size_H / resolution), int(self.fig_size_W / resolution)
-        self.h, self.w = h, w
+        h, w, h_t, w_t = int(self.fig_size_H / resolution), int(self.fig_size_W / resolution), int(self.fig_size_H_t / resolution), int(self.fig_size_W_t / resolution)
+        self.h, self.w, self.h_t, self.w_t = h, w, h_t, w_t
+        num_colors = 4
 
         # Set paths
         obj_filename_man = os.path.join(self.DATA_DIR, "Archive/Man_join/man.obj")
         obj_filename_tshirt = os.path.join(self.DATA_DIR, "Archive/tshirt_join/tshirt.obj")
+        obj_filename_trouser = os.path.join(self.DATA_DIR, "Archive/trouser_join/trouser.obj")
 
         self.coordinates = torch.stack(torch.meshgrid(torch.arange(h), torch.arange(w)), -1).to(device)
+        self.coordinates_t = torch.stack(torch.meshgrid(torch.arange(h_t), torch.arange(w_t)), -1).to(device)
+        self.tshirt_point = torch.rand([num_colors, args.num_points_tshirt, 3], requires_grad=True, device=device)
+        self.trouser_point = torch.rand([num_colors, args.num_points_trouser, 3], requires_grad=True, device=device)
         self.colors = torch.load("data/camouflage4.pth").float().to(device)
-        # print(self.colors)
-        self.colors = torch.tensor([
-            [194, 192, 172],
-            [157, 178, 194],
-            [106, 115, 84],
-            [83, 100, 116],
-            [41, 62, 85],
-            [46, 114, 75]]).float().to(device)
-        self.colors = torch.div(self.colors, 255.)
-        num_colors = self.colors.shape[0]
-
-        """
-        random_seeds = [
-            [[14, 67],[34, 58],[50, 60],[23, 6],[61, 13],[90, 8],[106, 19],[123, 11],[166, 51],[185, 58]],
-            [[2, 19],[10, 1],[51, 3],[76, 21],[99, 12],[141, 25],[138, 1],[185, 3],[190, 25],[211, 10]],
-            [[16, 13],[10, 48],[12, 76],[62, 44],[76, 68],[95, 76],[89, 29],[128, 44],[149, 79],[203, 52]],
-            [[16, 28],[56, 78],[82, 82],[108, 48],[105, 76],[138, 29],[170, 40],[191, 40],[177, 77],[214, 40]],
-            [[4, 32],[35, 33],[63, 32],[75, 81],[100, 31],[130, 32],[162, 3],[153, 35],[168, 83],[188, 32]],
-            [[0, 49],[27, 45],[71, 35],[85, 38],[106, 39],[119, 39],[135, 39],[176, 40],[169, 43],[205, 42]]
-        ]
-        for i, r in enumerate(random_seeds):
-            np.random.shuffle(r)
-        random_seeds = np.array(random_seeds).astype(np.float32)
-        random_seeds = np.random.rand(*random_seeds.shape) + random_seeds
-        random_seeds[:,:,0] = random_seeds[:,:,0] / self.w
-        random_seeds[:,:,1] = random_seeds[:,:,1] / self.h
-        random_seeds = np.clip(random_seeds, 0, 1)
-        # self.tshirt_point = torch.rand([num_colors, args.num_points_tshirt, 2], requires_grad=True, device=device)
-        # np.save("rand.npy", self.tshirt_point.cpu().detach().numpy())
-        self.tshirt_point = torch.tensor(random_seeds, requires_grad=True, device=device)
-        # np.save("ours.npy", random_seeds)
-        # self.tshirt_point = torch.full([num_colors, args.num_points_tshirt, 3], fill_value=0.7, requires_grad=True, device=device)
-        """
-
-        self.tshirt_point = torch.tensor(sample_n_per_color("road.png", num_colors, 60), requires_grad=True, device=device)
         self.mesh_man = load_objs_as_meshes([obj_filename_man], device=device)
         self.mesh_tshirt = load_objs_as_meshes([obj_filename_tshirt], device=device)
+        self.mesh_trouser = load_objs_as_meshes([obj_filename_trouser], device=device)
 
         self.faces = self.mesh_tshirt.textures.faces_uvs_padded()
         self.verts_uv = self.mesh_tshirt.textures.verts_uvs_padded()
         self.faces_uvs_tshirt = self.mesh_tshirt.textures.faces_uvs_list()[0]
 
-        # self.ref_image = img_as_float(imread("test.png"))
-        self.ref_image = np.array(Image.open("road.png").resize((self.fig_size_W, self.fig_size_H)))
-
-        self.optimizer = torch.optim.Adam([self.tshirt_point], args.lr)
+        self.faces_trouser = self.mesh_trouser.textures.faces_uvs_padded()
+        self.verts_uv_trouser = self.mesh_trouser.textures.verts_uvs_padded()
+        self.faces_uvs_trouser = self.mesh_trouser.textures.faces_uvs_list()[0]
+        self.optimizer = torch.optim.Adam([self.tshirt_point, self.trouser_point], lr=args.lr)
 
         if args.seed_type in ['fixed', 'random']:
             self.seeds_tshirt = torch.zeros(size=[h, w, num_colors], device=device).uniform_()
+            self.seeds_trouser = torch.zeros(size=[h_t, w_t, num_colors], device=device).uniform_()
             self.optimizer_seed = torch.optim.SGD([torch.zeros(1, device=device).requires_grad_()], lr=args.lr_seed)
         else:
             self.seeds_tshirt_train = torch.zeros(size=[h, w, num_colors], device=device).uniform_(args.clamp_shift,
                                                                                               1 - args.clamp_shift).requires_grad_()  # NOTE when not fixed we use uniform
+            self.seeds_trouser_train = torch.zeros(size=[h_t, w_t, num_colors], device=device).uniform_(args.clamp_shift,
+                                                                                                   1 - args.clamp_shift).requires_grad_()
 
             self.seeds_tshirt_fixed = torch.zeros(size=[h, w, num_colors], device=device).uniform_()
+            self.seeds_trouser_fixed = torch.zeros(size=[h_t, w_t, num_colors], device=device).uniform_()
 
             if args.seed_opt == 'sgd':
-                self.optimizer_seed = torch.optim.SGD([self.seeds_tshirt_train], lr=args.lr_seed)
+                self.optimizer_seed = torch.optim.SGD([self.seeds_tshirt_train, self.seeds_trouser_train], lr=args.lr_seed)
             elif args.seed_opt == 'adam':
-                self.optimizer_seed = torch.optim.Adam([self.seeds_tshirt_train], lr=args.lr_seed)
+                self.optimizer_seed = torch.optim.Adam([self.seeds_tshirt_train, self.seeds_trouser_train], lr=args.lr_seed)
             else:
                 raise ValueError
 
@@ -221,7 +193,7 @@ class PatchTrainer(object):
             self.expand_kernel.weight[i, i, :, :].data.fill_(1)
 
         selected_tshirt = torch.cat([torch.arange(27), torch.arange(28, 31), torch.arange(32, 43)])
-        self.tshirt_locations_infos = EasyDict({ # sleeves, torso
+        self.tshirt_locations_infos = EasyDict({
             'nparts': 3,
             'centers': [[7.5, 0], [-7.5, 0], [0, 0]],
             'Rs': [1.5, 1.5, 15.0],
@@ -231,6 +203,18 @@ class PatchTrainer(object):
             'radius_wrap': [[0.5], [0.5], [1.0]],
             'signs': [-1, -1, 1],
             'selected': selected_tshirt,
+        })
+
+        self.trouser_locations_infos = EasyDict({
+            'nparts': 2,
+            'centers': [[3.43, 0], [-3.43, 0]],
+            'Rs': [3.3] * 2,
+            'ntfs': [20] * 2,
+            'ntws': [12] * 2,
+            'radius_fixed': [[1.2]] * 2,
+            'radius_wrap': [[0.4]] * 2,
+            'signs': [1, 1],
+            'selected': None,
         })
 
         self.initialize_tps2d()
@@ -294,11 +278,18 @@ class PatchTrainer(object):
         locations_tshirt_ori = torch.load(os.path.join(self.DATA_DIR, 'Archive/tshirt_join/projections/part_all_2p5.pt'), map_location='cpu').to(self.device)
         self.infos_tshirt = MU.get_map_kernel(locations_tshirt_ori, self.faces_uvs_tshirt)
 
+        locations_trouser_ori = torch.load(os.path.join(self.DATA_DIR, 'Archive/trouser_join/projections/part_all_off3p4.pt'), map_location='cpu').to(self.device)
+        self.infos_trouser = MU.get_map_kernel(locations_trouser_ori, self.faces_uvs_trouser)
+
         target_control_points = p3dmd.get_points(self.tshirt_locations_infos, wrap=False).squeeze(0).cpu()
         tps2d_tshirt = TPSGridGen(None, target_control_points, locations_tshirt_ori.cpu())
         tps2d_tshirt.to(self.device)
         self.tps2d_tshirt = tps2d_tshirt
 
+        target_control_points = p3dmd.get_points(self.trouser_locations_infos, wrap=False).squeeze(0).cpu()
+        tps2d_trouser = TPSGridGen(None, target_control_points, locations_trouser_ori.cpu())
+        tps2d_trouser.to(self.device)
+        self.tps2d_trouser = tps2d_trouser
         return
 
     def initialize_tps3d(self):
@@ -313,7 +304,7 @@ class PatchTrainer(object):
             torch.linspace(ymin, ymax, ynum),
             torch.linspace(zmin, zmax, znum),
         )))
-        mesh = MU.join_meshes([self.mesh_man, self.mesh_tshirt])
+        mesh = MU.join_meshes([self.mesh_man, self.mesh_tshirt, self.mesh_trouser])
 
         tps3d = TPSGridGen(None, target_control_points, mesh.verts_packed().cpu())
         tps3d.to(self.device)
@@ -323,22 +314,24 @@ class PatchTrainer(object):
     def synthesis_image(self, img_batch, use_tps2d=True, use_tps3d=True):
         if use_tps2d:
             # tps_2d
-            source_control_points_tshirt = p3dmd.get_points(self.tshirt_locations_infos, torch.pi / 180 * self.args.tps2d_range_t, self.args.tps2d_range_r,
+            source_control_points_tshirt = p3dmd.get_points(self.tshirt_locations_infos, torch.pi / 180 * args.tps2d_range_t, args.tps2d_range_r,
                                                             bs=self.batch_size, random=True)
             locations_tshirt = self.tps2d_tshirt(source_control_points_tshirt.to(self.device))
+            source_control_points_trouser = p3dmd.get_points(self.trouser_locations_infos, torch.pi / 180 * args.tps2d_range_t, args.tps2d_range_r,
+                                                             bs=self.batch_size, random=True)
+            locations_trouser = self.tps2d_trouser(source_control_points_trouser.to(self.device))
         else:
-            locations_tshirt = None
+            locations_tshirt = locations_trouser = None
 
         if use_tps3d:
             # tps_3d
             source_coordinate = self.tps3d.tps_mesh(max_range=self.max_range, batch_size=self.batch_size).view(-1, 3)
         else:
             source_coordinate = None
-
         # render images
-        images_predicted = p3dmd.view_mesh_wrapped([self.mesh_man, self.mesh_tshirt],
-                                                   [None, locations_tshirt],
-                                                   [None, self.infos_tshirt], source_coordinate,
+        images_predicted = p3dmd.view_mesh_wrapped([self.mesh_man, self.mesh_tshirt, self.mesh_trouser],
+                                                   [None, locations_tshirt, locations_trouser],
+                                                   [None, self.infos_tshirt, self.infos_trouser], source_coordinate,
                                                    cameras=self.cameras, lights=self.lights, image_size=800, fov=45,
                                                    max_faces_per_bin=30000, faces_per_pixel=3)
         adv_batch = images_predicted.permute(0, 3, 1, 2)
@@ -348,19 +341,26 @@ class PatchTrainer(object):
     def update_mesh(self, tau=0.3, type='gumbel'):
         # camouflage:
         prob_map = prob_fix_color(self.tshirt_point, self.coordinates, self.colors, self.h, self.w, blur=self.args.blur).unsqueeze(0)
+        prob_trouser = prob_fix_color(self.trouser_point, self.coordinates_t, self.colors, self.h_t, self.w_t, blur=self.args.blur).unsqueeze(0)
         prob_map = self.camouflage_kernel(prob_map)
+        prob_trouser = self.camouflage_kernel(prob_trouser)
         prob_map = prob_map.squeeze(0).permute(1, 2, 0)
+        prob_trouser = prob_trouser.squeeze(0).permute(1, 2, 0)
 
         gb_tshirt = -(-(self.seeds_tshirt + 1e-20).log() + 1e-20).log()
+        gb_trouser = -(-(self.seeds_trouser + 1e-20).log() + 1e-20).log()
 
         tex = gumbel_color_fix_seed(prob_map, gb_tshirt, self.colors, tau=tau, type=type)
+        tex_trouser = gumbel_color_fix_seed(prob_trouser, gb_trouser, self.colors, tau=tau, type=type)
 
         tex = self.expand_kernel(self.color_transform(tex.permute(0, 3, 1, 2))).permute(0, 2, 3, 1)
-        # Image.fromarray((tex[0].detach().cpu().numpy()*255).astype(np.uint8)).show()
-        # tex = plt.imread("/home/cynthia/uw/Adversarial_camou/xp.png")[None,:]
-        self.mesh_tshirt.textures = TexturesUV(maps=tex, faces_uvs=self.faces, verts_uvs=self.verts_uv)
+        tex_trouser = self.expand_kernel(self.color_transform(tex_trouser.permute(0, 3, 1, 2))).permute(0, 2, 3, 1)
 
-        return tex
+        self.mesh_tshirt.textures = TexturesUV(maps=tex, faces_uvs=self.faces, verts_uvs=self.verts_uv)
+        self.mesh_trouser.textures = TexturesUV(maps=tex_trouser, faces_uvs=self.faces_trouser, verts_uvs=self.verts_uv_trouser)
+        raise Exception(tex.shape, self.mesh_tshirt)
+
+        return tex, tex_trouser
 
     def load_weights(self, save_path, epoch):
         path = save_path + '/' + str(epoch) + '_circle_epoch.pth'
@@ -369,15 +369,27 @@ class PatchTrainer(object):
         path = save_path + '/' + str(epoch) + '_color_epoch.pth'
         self.colors.data = torch.load(path, map_location='cpu').to(self.device)
 
+        path = save_path + '/' + str(epoch) + '_trouser_epoch.pth'
+        self.trouser_point.data = torch.load(path, map_location='cpu').to(self.device)
+
         path = save_path + '/' + str(epoch) + '_seed_tshirt_epoch.pth'
         self.seeds_tshirt = torch.load(path, map_location='cpu').to(self.device)
+
+        path = save_path + '/' + str(epoch) + '_seed_trouser_epoch.pth'
+        self.seeds_trouser = torch.load(path, map_location='cpu').to(self.device)
 
         if self.args.seed_type in ['variable', 'langevin']:
             path = save_path + '/' + str(epoch) + '_seed_tshirt_train_epoch.pth'
             self.seeds_tshirt_train.data = torch.load(path, map_location='cpu').to(self.device)
 
+            path = save_path + '/' + str(epoch) + '_seed_trouser_train_epoch.pth'
+            self.seeds_trouser_train.data = torch.load(path, map_location='cpu').to(self.device)
+
             path = save_path + '/' + str(epoch) + '_seed_tshirt_fixed_epoch.pth'
             self.seeds_tshirt_fixed.data = torch.load(path, map_location='cpu').to(self.device)
+
+            path = save_path + '/' + str(epoch) + '_seed_trouser_fixed_epoch.pth'
+            self.seeds_trouser_fixed.data = torch.load(path, map_location='cpu').to(self.device)
 
         path = save_path + '/' + str(epoch) + 'info.npz'
         if os.path.exists(path):
@@ -398,7 +410,6 @@ class PatchTrainer(object):
         if checkpoints > 0:
             self.load_weights(args.save_path, checkpoints - 1)
 
-        torch.autograd.set_detect_anomaly(True)
         for epoch in tqdm(range(checkpoints, args.nepoch)):
             print('######################################')
             ep_det_loss = 0
@@ -407,9 +418,7 @@ class PatchTrainer(object):
             ep_tv_loss = 0
             ep_ctrl_loss = 0
             ep_seed_loss = 0
-            # ep_ssim_loss = 0
             ep_log_likelihood = 0
-            ep_sim_loss = 0
             eff_count = 0  # record how many images in this epoch are really in training so that we can calculate accurate loss
             self.sampler_probs = self.loss_history / self.num_history
             if epoch % 100 == 0:
@@ -437,9 +446,9 @@ class PatchTrainer(object):
 
                 if args.seed_type in ['variable', 'langevin']:
                     self.seeds_tshirt = args.seed_ratio * self.seeds_tshirt_train + (1 - args.seed_ratio) * self.seeds_tshirt_fixed
+                    self.seeds_trouser = args.seed_ratio * self.seeds_trouser_train + (1 - args.seed_ratio) * self.seeds_trouser_fixed
 
-                tex = self.update_mesh(tau=tau)
-                # Image.fromarray(img_batch[0].cpu().numpy())
+                tex, tex_trouser = self.update_mesh(tau=tau)
                 p_img_batch, gt = self.synthesis_image(img_batch, not args.disable_tps2d, not args.disable_tps3d)
                 t1 = time.time()
                 normalize = True
@@ -452,8 +461,7 @@ class PatchTrainer(object):
                 try:
                     det_loss, max_prob_list = self.prob_extractor(output, gt, loss_type=args.loss_type, iou_thresh=args.train_iou)
                     eff_count += 1
-                except RuntimeError as e:  # current batch of imgs have no bbox be detected
-                    print("ERROR", e)
+                except RuntimeError:  # current batch of imgs have no bbox be detected
                     continue
                 t3 = time.time()
                 if self.azim_inds is not None:
@@ -461,20 +469,18 @@ class PatchTrainer(object):
                     self.num_history.index_put_([self.azim_inds], torch.ones_like(max_prob_list), accumulate=True)
                 loss = 0
                 tv_loss = torch.tensor([0])
-                loss += 0.1*det_loss
+                loss += det_loss
                 if args.tv_loss > 0:
                     tv_loss = self.tv_loss(tex)
                     loss += tv_loss * args.tv_loss
 
                 loss_c = ctrl_loss(self.tshirt_point, self.fig_size_H, self.fig_size_W)
+                loss_c += ctrl_loss(self.trouser_point, self.fig_size_H_t, self.fig_size_W_t)
                 loss += args.ctrl * loss_c
-
-                # if args.loss_ssim != 0:
-                #     loss_ssim = 1-structural_similarity(tex[0].detach().cpu().numpy(), self.ref_image, channel_axis=2, data_range=self.ref_image.max()-self.ref_image.min())
-                #     loss += loss_ssim
 
                 if args.cdist != 0:
                     loss_seed = args.cdist * reg_dist(self.seeds_tshirt_train.flatten(), sample_num=args.rd_num)
+                    loss_seed += args.cdist * reg_dist(self.seeds_trouser_train.flatten(), sample_num=args.rd_num)
                     loss += loss_seed
                 else:
                     loss_seed = torch.zeros([], device=self.device)
@@ -484,19 +490,21 @@ class PatchTrainer(object):
                 ep_det_loss += det_loss.item()
                 ep_tv_loss += tv_loss.item()
                 ep_seed_loss += loss_seed.item()
-                # ep_ssim_loss += loss_ssim.item()
                 ep_loss += loss.item()
                 loss.backward()
                 self.optimizer.step()
                 if args.seed_type == 'random':
                     self.seeds_tshirt.uniform_()
+                    self.seeds_trouser.uniform_()
                 elif args.seed_type != 'fixed':
                     self.seeds_tshirt_train.grad /= args.seed_temp
+                    self.seeds_trouser_train.grad /= args.seed_temp
                     self.optimizer_seed.step()
                     self.seeds_tshirt_train.data.clamp_(args.clamp_shift, 1 - args.clamp_shift)
+                    self.seeds_trouser_train.data.clamp_(args.clamp_shift, 1 - args.clamp_shift)
                     if args.seed_type == 'langevin':
                         beta = np.sqrt(2 * self.optimizer_seed.param_groups[0]['lr'])
-                        for s in [self.seeds_tshirt_train]:
+                        for s in [self.seeds_tshirt_train, self.seeds_trouser_train]:
                             # assert beta and clamp_shift are both small
                             raw = s + s.new(s.shape).normal_() * beta
                             s.data = raw.clamp(args.clamp_shift, 1 - args.clamp_shift) * 2 - raw
@@ -504,6 +512,7 @@ class PatchTrainer(object):
                 t4 = time.time()
                 self.tshirt_point.data = self.tshirt_point.data.clamp(0, 1)
                 self.colors.data = self.colors.data.clamp(0, 1)
+                self.trouser_point.data = self.trouser_point.data.clamp(0, 1)
 
                 if i_batch % 10 == 0:
                     iteration = self.epoch_length * epoch + i_batch
@@ -520,7 +529,6 @@ class PatchTrainer(object):
             ep_ctrl_loss = ep_ctrl_loss / eff_count
             ep_mean_prob = ep_mean_prob / eff_count
             ep_seed_loss = ep_seed_loss / eff_count
-            # ep_ssim_loss = ep_ssim_loss / eff_count
             if True:
                 print('  EPOCH NR: ', epoch),
                 print('EPOCH LOSS: ', ep_loss)
@@ -529,15 +537,7 @@ class PatchTrainer(object):
                 print('   TV LOSS: ', ep_tv_loss)
                 print(' CTRL LOSS: ', ep_ctrl_loss)
                 print(' SEED LOSS: ', ep_seed_loss)
-                # print(' SSIM LOSS: ', ep_ssim_loss)
                 print('EPOCH TIME: ', et1 - et0)
-                # if epoch % 2 == 0:
-                    # plt.imshow(tex[0].detach().cpu().numpy())
-                    # plt.pause(0.1)
-                    # plt.cla()
-                    # print(tex[0].max(), tex[0].min(), tex[0].shape)
-                    # plt.imsave("intermediate.png", tex[0].detach().clamp(0,1).cpu().numpy())
-                    # _ = input()
 
                 # self.writer.add_scalar('epoch/total_loss', ep_loss, epoch)
                 # self.writer.add_scalar('epoch/tv_loss', ep_tv_loss, epoch)
@@ -547,11 +547,16 @@ class PatchTrainer(object):
                 # self.writer.add_scalar('epoch/lr', self.optimizer.param_groups[0]['lr'], epoch)
             et0 = time.time()
 
-            if (epoch + 1) % 10 == 0 or epoch == 0:
-                tex_img = Image.fromarray(np.array(255*tex.squeeze(0).detach().cpu()).astype('uint8'))
-                tex_img.save(f"epoch_{epoch}.png")
-                # tex_img.show()
+            if (epoch + 1) % 100 == 0 or epoch == 0:
+                fig = plt.figure()
+                plt.imshow(tex[0].detach().cpu().numpy())
+                plt.axis('off')
                 # self.writer.add_figure('maps_tshirt', fig, epoch)
+
+                fig = plt.figure()
+                plt.imshow(tex_trouser[0].detach().cpu().numpy())
+                plt.axis('off')
+                # self.writer.add_figure('maps_trouser', fig, epoch)
 
             if (epoch + 1) % 50 == 0:
                 if not os.path.exists(args.save_path):
@@ -560,15 +565,27 @@ class PatchTrainer(object):
                 torch.save(self.tshirt_point, path)
                 path = args.save_path + '/' + str(epoch) + '_color_epoch.pth'
                 torch.save(self.colors, path)
+                path = args.save_path + '/' + str(epoch) + '_trouser_epoch.pth'
+                torch.save(self.trouser_point, path)
+
                 path = args.save_path + '/' + str(epoch) + '_seed_tshirt_epoch.pth'
                 torch.save(self.seeds_tshirt, path)
+
+                path = args.save_path + '/' + str(epoch) + '_seed_trouser_epoch.pth'
+                torch.save(self.seeds_trouser, path)
 
                 if args.seed_type in ['variable', 'langevin']:
                     path = args.save_path + '/' + str(epoch) + '_seed_tshirt_train_epoch.pth'
                     torch.save(self.seeds_tshirt_train, path)
 
+                    path = args.save_path + '/' + str(epoch) + '_seed_trouser_train_epoch.pth'
+                    torch.save(self.seeds_trouser_train, path)
+
                     path = args.save_path + '/' + str(epoch) + '_seed_tshirt_fixed_epoch.pth'
                     torch.save(self.seeds_tshirt_fixed, path)
+
+                    path = args.save_path + '/' + str(epoch) + '_seed_trouser_fixed_epoch.pth'
+                    torch.save(self.seeds_trouser_fixed, path)
 
                 path = args.save_path + '/' + str(epoch) + 'info.npz'
                 np.savez(path, loss_history=self.loss_history.cpu().numpy(), num_history=self.num_history.cpu().numpy(), azim=self.azim.cpu().numpy())
@@ -674,7 +691,6 @@ class PatchTrainer(object):
                     confs[it].extend([p[0] if p[1] else 0.0 for p in pos])
        
 
-        print(len(positives) / total) 
         positives = sorted(positives, key=lambda d: d[0], reverse=True)
         confs = np.array(confs)
         tps = []
@@ -682,7 +698,6 @@ class PatchTrainer(object):
         tp_counter = 0
         fp_counter = 0
         # all matches in dataset
-        print("FOUND ", len(positives), "POSITIVES")
         for pos in positives:
             if pos[1]:
                 tp_counter += 1
@@ -712,7 +727,6 @@ class PatchTrainer(object):
         else:
             avg = float('nan')
 
-        print(avg)
         return precision, recall, avg, confs, thetas_list
 
 
@@ -722,7 +736,7 @@ if __name__ == '__main__':
     parser.add_argument('--device', default='cuda:1', help='')
     parser.add_argument('--lr', type=float, default=0.001, help='')
     parser.add_argument('--lr_seed', type=float, default=0.01, help='')
-    parser.add_argument('--nepoch', type=int, default=60, help='')
+    parser.add_argument('--nepoch', type=int, default=600, help='')
     parser.add_argument('--checkpoints', type=int, default=0, help='')
     parser.add_argument('--batch_size', type=int, default=4, help='')
     parser.add_argument('--save_path', default='results/', help='')

@@ -51,6 +51,7 @@ class MaxProbExtractor(nn.Module):
                     _, ids = torch.max(ious, dim=0) # get the bbox w/ biggest iou compared to gt
                     det_loss.append(scores[ids])
                     max_probs.append(scores[ids])
+                    print(1)
                     num += 1
                 elif loss_type == 'max_conf':
                     det_loss.append(scores.max())
