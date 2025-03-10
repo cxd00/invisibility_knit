@@ -26,7 +26,7 @@ def sample_n_per_color(filename, num_colors, num_samples):
     if img.mode != 'RGB':
         img = img.convert('RGB')
     
-    pix = img.load()
+    pix = np.array(img)
 
     # Get palette of colors
     # Quantize down to num_color palettised image using *"Fast Octree"* method
@@ -35,7 +35,6 @@ def sample_n_per_color(filename, num_colors, num_samples):
     q = img.quantize(colors=num_colors,method=2)
     palette = np.array(q.getpalette())
     palette = palette.reshape(num_colors, 3)
-    # print(palette)
     
     # Start a list of pixels of each color
     pixels_by_color = defaultdict(list)
@@ -43,11 +42,12 @@ def sample_n_per_color(filename, num_colors, num_samples):
     # print(pixels_by_color)
     for idx, color in enumerate(palette):
         # pixels_by_color.append([])
-        for x in range(width):
-            for y in range(height):
-                pixel = np.array(pix[x, y])
+        for y in range(height):
+            for x in range(width):
+                pixel = np.array(pix[y, x])
                 if np.array_equal(pixel, color):
-                    pixels_by_color[idx].append(np.array([x/(ratio*width), y/(ratio*height)]))
+                    pixels_by_color[idx].append(np.array([(y+np.random.rand())/height, (x+np.random.rand())/width]))
+                    # pixels_by_color[idx].append(np.array([x, y]))
         print("color", idx, len(pixels_by_color[idx]))
 
     # Sample pixels by color
@@ -62,15 +62,16 @@ def sample_n_per_color(filename, num_colors, num_samples):
         samples_by_color.append(np.clip(np.array(random_samples), 0,1))
     samples_by_color = np.array(samples_by_color)
     # Add [0, 1) (random) to each pixel (from top left corner)
-    randoms = np.random.rand(num_colors, num_samples, 2)
+    # randoms = np.random.rand(num_colors, num_samples, 2)/0.001
     # print(samples_by_color[0][:3])
-    samples_by_color = samples_by_color + randoms
+    # samples_by_color = samples_by_color + randoms
+    # samples_by_color[:,:,0] = samples_by_color[:,:,0]/height
+    # samples_by_color[:,:,1] = samples_by_color[:,:,1]/width
     # print(samples_by_color[0][:3])
-    return samples_by_color
+    return samples_by_color, palette
 
 
 if __name__ == "__main__":
     # palette = [[194, 192, 172], [157, 178, 194], [106, 115, 84], [83, 100, 116], [41, 62, 85], [46, 114, 75]]
     samples_by_color = sample_n_per_color("road.png", 6, 60)
     # pixels_by_color = np.array(pixels_by_color)
-    print(samples_by_color.shape)

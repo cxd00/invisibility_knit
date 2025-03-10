@@ -192,8 +192,8 @@ def prob_fix_color(original_circles, coordinates, colors, fig_size_h, fig_size_w
     # circles = original_circles * fig_size_h
 
     # circles: scale values for colorxpoint up by height, width respectively
-    circle0 = original_circles[...,1]*fig_size_h
-    circle1 = original_circles[...,0]*fig_size_w
+    circle0 = original_circles[...,0]*fig_size_h
+    circle1 = original_circles[...,1]*fig_size_w
     circles = torch.stack([circle0,circle1],dim=-1)
     # now you have the control points-per-color scaled to either H or W
     dist_sum = torch.zeros([colors.shape[0],fig_size_h,fig_size_w]).to(coordinates.device)
