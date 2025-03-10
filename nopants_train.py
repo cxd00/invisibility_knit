@@ -134,7 +134,7 @@ class PatchTrainer(object):
         self.fig_size_H = 340
         self.fig_size_W = 860
 
-        resolution = 1
+        resolution = 4
         h, w = int(self.fig_size_H / resolution), int(self.fig_size_W / resolution)
         self.h, self.w = h, w
 
@@ -406,6 +406,7 @@ class PatchTrainer(object):
         wandb.define_metric("tv_loss", step_metric="epoch")
         wandb.define_metric("ctrl_loss", step_metric="epoch")
         wandb.define_metric("seed_loss", step_metric="epoch")
+        wandb.define_metric("ssim_loss", step_metric="epoch")
         wandb.define_metric("epoch_time", step_metric="epoch")
 
         et0 = time.time()
@@ -422,7 +423,7 @@ class PatchTrainer(object):
             ep_tv_loss = 0
             ep_ctrl_loss = 0
             ep_seed_loss = 0
-            # ep_ssim_loss = 0
+            ep_ssim_loss = 0
             ep_log_likelihood = 0
             ep_sim_loss = 0
             eff_count = 0  # record how many images in this epoch are really in training so that we can calculate accurate loss
@@ -484,9 +485,9 @@ class PatchTrainer(object):
                 loss_c = ctrl_loss(self.tshirt_point, self.fig_size_H, self.fig_size_W)
                 loss += args.ctrl * loss_c
 
-                # if args.loss_ssim != 0:
-                #     loss_ssim = 1-structural_similarity(tex[0].detach().cpu().numpy(), self.ref_image, channel_axis=2, data_range=self.ref_image.max()-self.ref_image.min())
-                #     loss += loss_ssim
+                if args.loss_ssim != 0:
+                    loss_ssim = 1-structural_similarity(tex[0].detach().cpu().numpy(), self.ref_image, channel_axis=2, data_range=self.ref_image.max()-self.ref_image.min())
+                    loss += loss_ssim
 
                 if args.cdist != 0:
                     loss_seed = args.cdist * reg_dist(self.seeds_tshirt_train.flatten(), sample_num=args.rd_num)
@@ -499,7 +500,7 @@ class PatchTrainer(object):
                 ep_det_loss += det_loss.item()
                 ep_tv_loss += tv_loss.item()
                 ep_seed_loss += loss_seed.item()
-                # ep_ssim_loss += loss_ssim.item()
+                ep_ssim_loss += loss_ssim.item()
                 ep_loss += loss.item()
                 loss.backward()
                 self.optimizer.step()
@@ -535,7 +536,7 @@ class PatchTrainer(object):
             ep_ctrl_loss = ep_ctrl_loss / eff_count
             ep_mean_prob = ep_mean_prob / eff_count
             ep_seed_loss = ep_seed_loss / eff_count
-            # ep_ssim_loss = ep_ssim_loss / eff_count
+            ep_ssim_loss = ep_ssim_loss / eff_count
             if True:
                 print('  EPOCH NR: ', epoch),
                 print('EPOCH LOSS: ', ep_loss)
@@ -544,7 +545,7 @@ class PatchTrainer(object):
                 print('   TV LOSS: ', ep_tv_loss)
                 print(' CTRL LOSS: ', ep_ctrl_loss)
                 print(' SEED LOSS: ', ep_seed_loss)
-                # print(' SSIM LOSS: ', ep_ssim_loss)
+                print(' SSIM LOSS: ', ep_ssim_loss)
                 print('EPOCH TIME: ', et1 - et0)
                 wandb.log({
                     "epoch": epoch,
@@ -553,6 +554,7 @@ class PatchTrainer(object):
                     "mean_prob": ep_mean_prob,
                     "tv_loss": ep_tv_loss,
                     "ctrl_loss": ep_ctrl_loss,
+                    "ssim_loss": ep_ssim_loss,
                     "seed_loss": ep_seed_loss,
                     "epoch_time": et1 - et0,
                     "synthesized_texture": wandb.Image(
@@ -794,6 +796,7 @@ if __name__ == '__main__':
     parser.add_argument("--anneal", default=False, action='store_true', help='')
     parser.add_argument("--anneal_init", type=float, default=5.0, help='')
     parser.add_argument("--anneal_alpha", type=float, default=3.0, help='')
+    parser.add_argument("--loss_ssim", type=float, default=0, help='')
 
 
     args = parser.parse_args()
