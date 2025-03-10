@@ -133,7 +133,7 @@ class PatchTrainer(object):
         self.fig_size_H = 340
         self.fig_size_W = 860
 
-        resolution = 4
+        resolution = 1
         h, w = int(self.fig_size_H / resolution), int(self.fig_size_W / resolution)
         self.h, self.w = h, w
 
@@ -177,7 +177,11 @@ class PatchTrainer(object):
         # self.tshirt_point = torch.full([num_colors, args.num_points_tshirt, 3], fill_value=0.7, requires_grad=True, device=device)
         """
 
-        self.tshirt_point = torch.tensor(sample_n_per_color("road.png", num_colors, 60), requires_grad=True, device=device)
+        points, colors = sample_n_per_color("road.png", num_colors, args.num_points_tshirt)
+        self.colors =  torch.tensor(colors).float().to(device)
+        self.colors = torch.div(self.colors, 255.)
+        num_colors = self.colors.shape[0]
+        self.tshirt_point = torch.tensor(points, requires_grad=True, device=device)
         self.mesh_man = load_objs_as_meshes([obj_filename_man], device=device)
         self.mesh_tshirt = load_objs_as_meshes([obj_filename_tshirt], device=device)
 
@@ -356,7 +360,8 @@ class PatchTrainer(object):
         tex = gumbel_color_fix_seed(prob_map, gb_tshirt, self.colors, tau=tau, type=type)
 
         tex = self.expand_kernel(self.color_transform(tex.permute(0, 3, 1, 2))).permute(0, 2, 3, 1)
-        # Image.fromarray((tex[0].detach().cpu().numpy()*255).astype(np.uint8)).show()
+        Image.fromarray((tex[0].detach().cpu().numpy()*255).astype(np.uint8)).show()
+        print(tex.mean())
         # tex = plt.imread("/home/cynthia/uw/Adversarial_camou/xp.png")[None,:]
         self.mesh_tshirt.textures = TexturesUV(maps=tex, faces_uvs=self.faces, verts_uvs=self.verts_uv)
 
