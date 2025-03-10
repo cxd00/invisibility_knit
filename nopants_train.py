@@ -53,6 +53,7 @@ from pytorch3d.renderer import (
     BlendParams,
     TexturesUV
 )
+import wandb
 
 # add path for demo utils functions 
 sys.path.append(os.path.abspath(''))
@@ -398,6 +399,15 @@ class PatchTrainer(object):
         # self.writer = self.init_tensorboard()
         args = self.args
 
+        wandb.define_metric("epoch", step_metric="epoch")
+        wandb.define_metric("epoch_loss", step_metric="epoch")
+        wandb.define_metric("detection_loss", step_metric="epoch")
+        wandb.define_metric("mean_prob", step_metric="epoch")
+        wandb.define_metric("tv_loss", step_metric="epoch")
+        wandb.define_metric("ctrl_loss", step_metric="epoch")
+        wandb.define_metric("seed_loss", step_metric="epoch")
+        wandb.define_metric("epoch_time", step_metric="epoch")
+
         et0 = time.time()
         checkpoints = args.checkpoints
         if checkpoints > 0:
@@ -536,6 +546,24 @@ class PatchTrainer(object):
                 print(' SEED LOSS: ', ep_seed_loss)
                 # print(' SSIM LOSS: ', ep_ssim_loss)
                 print('EPOCH TIME: ', et1 - et0)
+                wandb.log({
+                    "epoch": epoch,
+                    "epoch_loss": ep_loss,
+                    "detection_loss": ep_det_loss,
+                    "mean_prob": ep_mean_prob,
+                    "tv_loss": ep_tv_loss,
+                    "ctrl_loss": ep_ctrl_loss,
+                    "seed_loss": ep_seed_loss,
+                    "epoch_time": et1 - et0,
+                    "synthesized_texture": wandb.Image(
+                        np.array(255*tex.squeeze(0).detach().cpu()).astype('uint8'),
+                        caption=f"Texture at Epoch {epoch}"
+                    ),
+                    "rendered_image": wandb.Image(
+                        np.array(255*p_img_batch[0].permute(1,2,0).detach().cpu()).astype('uint8'),
+                        caption=f"Rendered at Epoch {epoch}"
+                    )
+                })
                 # if epoch % 2 == 0:
                     # plt.imshow(tex[0].detach().cpu().numpy())
                     # plt.pause(0.1)
@@ -778,6 +806,10 @@ if __name__ == '__main__':
     print("Train info:", args)
     trainer = PatchTrainer(args)
     if not args.test:
+        config = vars(args)
+        config["epochs"] = args.nepoch
+        wandb.init(project="invisibility_knit", config=config, id="nopants-" + str(args.nepoch) + "-" + datetime.now().strftime("%Y-%m-%d-%H-%M-%S"))
+
         trainer.train()
     else:
         epoch = args.checkpoints - 1
