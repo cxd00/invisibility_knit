@@ -361,8 +361,8 @@ class PatchTrainer(object):
         tex = gumbel_color_fix_seed(prob_map, gb_tshirt, self.colors, tau=tau, type=type)
 
         tex = self.expand_kernel(self.color_transform(tex.permute(0, 3, 1, 2))).permute(0, 2, 3, 1)
-        Image.fromarray((tex[0].detach().cpu().numpy()*255).astype(np.uint8)).show()
-        print(tex.mean())
+        # Image.fromarray((tex[0].detach().cpu().numpy()*255).astype(np.uint8)).show()
+        # print(tex.mean())
         # tex = plt.imread("/home/cynthia/uw/Adversarial_camou/xp.png")[None,:]
         self.mesh_tshirt.textures = TexturesUV(maps=tex, faces_uvs=self.faces, verts_uvs=self.verts_uv)
 

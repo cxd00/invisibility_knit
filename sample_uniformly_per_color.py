@@ -15,12 +15,12 @@ from collections import defaultdict
 # num_colors x num_samples x 2 (x,y) coordinates for control points
 def sample_n_per_color(filename, num_colors, num_samples):
     img = PIL.Image.open(filename)
-    img.show()
+    # img.show()
 
     width, height = img.size
     ratio = 4
-    print(width)
-    print(height)
+    # print(width)
+    # print(height)
 
     # Convert the image to 'RGB' mode if it's not (JPG does not support transparency)
     if img.mode != 'RGB':
@@ -48,7 +48,7 @@ def sample_n_per_color(filename, num_colors, num_samples):
                 if np.array_equal(pixel, color):
                     pixels_by_color[idx].append(np.array([(y+np.random.rand())/height, (x+np.random.rand())/width]))
                     # pixels_by_color[idx].append(np.array([x, y]))
-        print("color", idx, len(pixels_by_color[idx]))
+        # print("color", idx, len(pixels_by_color[idx]))
 
     # Sample pixels by color
     # For each color:
