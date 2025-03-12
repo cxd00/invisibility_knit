@@ -143,17 +143,6 @@ class PatchTrainer(object):
         obj_filename_tshirt = os.path.join(self.DATA_DIR, "Archive/tshirt_join/tshirt.obj")
 
         self.coordinates = torch.stack(torch.meshgrid(torch.arange(h), torch.arange(w)), -1).to(device)
-        self.colors = torch.load("data/camouflage4.pth").float().to(device)
-        # print(self.colors)
-        self.colors = torch.tensor([
-            [194, 192, 172],
-            [157, 178, 194],
-            [106, 115, 84],
-            [83, 100, 116],
-            [41, 62, 85],
-            [46, 114, 75]]).float().to(device)
-        self.colors = torch.div(self.colors, 255.)
-        num_colors = self.colors.shape[0]
 
         """
         random_seeds = [
@@ -178,7 +167,7 @@ class PatchTrainer(object):
         # self.tshirt_point = torch.full([num_colors, args.num_points_tshirt, 3], fill_value=0.7, requires_grad=True, device=device)
         """
 
-        points, colors = sample_n_per_color("road.png", num_colors, args.num_points_tshirt)
+        points, colors = sample_n_per_color(args.ref_image_path, args.num_points_tshirt)
         self.colors =  torch.tensor(colors).float().to(device)
         self.colors = torch.div(self.colors, 255.)
         num_colors = self.colors.shape[0]
@@ -190,8 +179,7 @@ class PatchTrainer(object):
         self.verts_uv = self.mesh_tshirt.textures.verts_uvs_padded()
         self.faces_uvs_tshirt = self.mesh_tshirt.textures.faces_uvs_list()[0]
 
-        # self.ref_image = img_as_float(imread("test.png"))
-        self.ref_image = np.array(Image.open("road.png").resize((self.fig_size_W, self.fig_size_H)))
+        self.ref_image = np.array(Image.open(args.ref_image_path).resize((self.fig_size_W, self.fig_size_H)))
 
         self.optimizer = torch.optim.Adam([self.tshirt_point], args.lr)
 
@@ -485,8 +473,8 @@ class PatchTrainer(object):
                 loss_c = ctrl_loss(self.tshirt_point, self.fig_size_H, self.fig_size_W)
                 loss += args.ctrl * loss_c
 
+                loss_ssim = 1-structural_similarity(tex[0].detach().cpu().numpy(), self.ref_image, channel_axis=2, data_range=self.ref_image.max()-self.ref_image.min())
                 if args.loss_ssim != 0:
-                    loss_ssim = 1-structural_similarity(tex[0].detach().cpu().numpy(), self.ref_image, channel_axis=2, data_range=self.ref_image.max()-self.ref_image.min())
                     loss += loss_ssim
 
                 if args.cdist != 0:
@@ -797,7 +785,8 @@ if __name__ == '__main__':
     parser.add_argument("--anneal_init", type=float, default=5.0, help='')
     parser.add_argument("--anneal_alpha", type=float, default=3.0, help='')
     parser.add_argument("--loss_ssim", type=float, default=0, help='')
-
+    parser.add_argument("--ref_image_path", type=str, default='road.png', help='')
+    parser.add_argument("--num_colors", type=int, default=6, help='')
 
     args = parser.parse_args()
     assert args.seed_type in ['fixed', 'random', 'variable', 'langevin']
