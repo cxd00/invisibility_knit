@@ -180,6 +180,8 @@ class PatchTrainer(object):
         self.faces_uvs_tshirt = self.mesh_tshirt.textures.faces_uvs_list()[0]
 
         self.ref_image = np.array(Image.open(args.ref_image_path).resize((self.fig_size_W, self.fig_size_H)))
+        print("ref_image fig_size W:", self.fig_size_W)
+        print("ref_image fig_size H:", self.fig_size_H)
 
         self.optimizer = torch.optim.Adam([self.tshirt_point], args.lr)
 
@@ -473,6 +475,9 @@ class PatchTrainer(object):
                 loss_c = ctrl_loss(self.tshirt_point, self.fig_size_H, self.fig_size_W)
                 loss += args.ctrl * loss_c
 
+                if epoch == 0:
+                    # set on the first epoch to be the reference image for future epochs
+                    self.ref_image = tex[0].detach().cpu().numpy()
                 loss_ssim = 1-structural_similarity(tex[0].detach().cpu().numpy(), self.ref_image, channel_axis=2, data_range=self.ref_image.max()-self.ref_image.min())
                 if args.loss_ssim != 0:
                     loss += loss_ssim
@@ -697,7 +702,7 @@ class PatchTrainer(object):
                     confs[it].extend([p[0] if p[1] else 0.0 for p in pos])
        
 
-        print(len(positives) / total) 
+        print("POSITIVES / TOTAL:",len(positives) / total) 
         positives = sorted(positives, key=lambda d: d[0], reverse=True)
         confs = np.array(confs)
         tps = []

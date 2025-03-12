@@ -214,6 +214,7 @@ def gumbel_color_fix_seed(prob_map, seed, color, tau=0.3, type='gumbel'):
     else:
         raise ValueError
     tex = torch.matmul(color_map, color).unsqueeze(0)
+    # TODO: save tex here
     return tex
 
 
