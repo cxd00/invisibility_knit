@@ -59,9 +59,9 @@ def sample_n_per_color(filename, num_samples):
     for idx, candidates in enumerate(pixels_by_color):
         # Pick 60 pixels at random (with replacement)
         # random_samples = candidates[np.random.randint(candidates.shape[0], size=num_samples), :]
-        # print(candidates)
+        print(candidates)
         random_samples = [random.choice(candidates) for _ in range(num_samples)]
-        # print(len(random_samples))
+        print(random_samples)
         samples_by_color.append(np.array(random_samples))
     samples_by_color = np.array(samples_by_color)
     # Add [0, 1) (random) to each pixel (from top left corner)
@@ -73,6 +73,11 @@ def sample_n_per_color(filename, num_samples):
     # for idx, color in enumerate(palette):
 
     # print(samples_by_color[0][:3])
+
+    scaled_samples_by_color = samples_by_color
+    scaled_samples_by_color[:,:,0] = samples_by_color[:,:,0] / width
+    scaled_samples_by_color[:,:,1] = samples_by_color[:,:,1] / height
+
     return samples_by_color, palette
 
 
